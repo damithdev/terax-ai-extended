@@ -1,19 +1,19 @@
 ﻿import { describe, expect, it } from "vitest";
 import {
+  type CustomEndpoint,
   compatModelIdForEndpoint,
   endpointIdFromCompatModel,
   estimateCost,
   getModelContextLimit,
   isCompatModelId,
+  MODEL_CONTEXT_LIMITS,
+  MODEL_PRICING,
+  MODELS,
   migrateLegacyCompatEndpoint,
   modelKeepsReasoning,
   modelSupportsTemperature,
   modelUsesReasoningTokens,
-  MODELS,
-  MODEL_CONTEXT_LIMITS,
-  MODEL_PRICING,
   resolveModel,
-  type CustomEndpoint,
 } from "./config";
 
 const endpoint: CustomEndpoint = {
@@ -61,7 +61,9 @@ describe("resolveModel", () => {
     ["gpt-5.6-luna", "openai"],
     ["claude-fable-5", "anthropic"],
     ["claude-sonnet-5", "anthropic"],
+    ["grok-4.6", "xai"],
     ["grok-4.5", "xai"],
+    ["grok-4.20-multi-agent", "xai"],
   ] as const)("resolves current model %s through %s", (modelId, provider) => {
     expect(resolveModel(modelId).provider).toBe(provider);
   });
@@ -87,7 +89,9 @@ describe("getModelContextLimit", () => {
     ["gpt-5.6-luna", 1_050_000],
     ["claude-fable-5", 1_000_000],
     ["claude-sonnet-5", 1_000_000],
+    ["grok-4.6", 500_000],
     ["grok-4.5", 500_000],
+    ["grok-4.20-multi-agent", 1_000_000],
   ] as const)("uses the published context limit for %s", (modelId, limit) => {
     expect(getModelContextLimit(modelId)).toBe(limit);
   });
@@ -100,15 +104,21 @@ describe("current model pricing", () => {
     ["gpt-5.6-luna", 1, 6, 0.1],
     ["claude-fable-5", 10, 50, 1],
     ["claude-sonnet-5", 3, 15, 0.3],
-    ["grok-4.5", 2, 6, 0.5],
-  ] as const)("uses the published token pricing for %s", (modelId, input, output, cacheRead) => {
-    expect(MODEL_PRICING[modelId]).toEqual({ input, output, cacheRead });
-  });
+    ["grok-4.6", 2, 6, 0.5],
+    ["grok-4.5", 2, 6, 0.3],
+  ] as const)(
+    "uses the published token pricing for %s",
+    (modelId, input, output, cacheRead) => {
+      expect(MODEL_PRICING[modelId]).toEqual({ input, output, cacheRead });
+    },
+  );
 });
 
 describe("modelKeepsReasoning", () => {
   it("keeps reasoning for compat endpoints (freeform provider)", () => {
-    const info = resolveModel(compatModelIdForEndpoint(endpoint.id), [endpoint]);
+    const info = resolveModel(compatModelIdForEndpoint(endpoint.id), [
+      endpoint,
+    ]);
     expect(modelKeepsReasoning(info)).toBe(true);
   });
 
@@ -133,6 +143,7 @@ describe("model sampling capabilities", () => {
 
   it("keeps temperature for models that accept sampling parameters", () => {
     expect(modelSupportsTemperature("openai", "gpt-4.1-mini")).toBe(true);
+    expect(modelSupportsTemperature("xai", "grok-4.6")).toBe(true);
     expect(modelSupportsTemperature("xai", "grok-4.5")).toBe(true);
   });
 
@@ -146,11 +157,15 @@ describe("model sampling capabilities", () => {
     ["openai", "gpt-5.4-nano"],
     ["openai", "gpt-5.6-luna"],
     ["anthropic", "claude-sonnet-5"],
+    ["xai", "grok-4.6"],
     ["xai", "grok-4.5"],
     ["groq", "openai/gpt-oss-20b"],
-  ] as const)("allocates a reasoning output budget for %s/%s", (provider, modelId) => {
-    expect(modelUsesReasoningTokens(provider, modelId)).toBe(true);
-  });
+  ] as const)(
+    "allocates a reasoning output budget for %s/%s",
+    (provider, modelId) => {
+      expect(modelUsesReasoningTokens(provider, modelId)).toBe(true);
+    },
+  );
 });
 
 describe("migrateLegacyCompatEndpoint", () => {
@@ -217,8 +232,12 @@ describe("estimateCost", () => {
   });
 
   it("falls back to the input price when a model has no cache-read rate", () => {
-    const grok = { inputTokens: 1_000_000, outputTokens: 0, cachedInputTokens: 400_000 };
-    expect(estimateCost("grok-4.20-reasoning", grok)).toBeCloseTo(3, 6);
+    const grok = {
+      inputTokens: 1_000_000,
+      outputTokens: 0,
+      cachedInputTokens: 400_000,
+    };
+    expect(estimateCost("gpt-5.5-pro", grok)).toBeCloseTo(30, 6);
   });
 
   it("never charges negative fresh tokens when cache exceeds input", () => {

@@ -23,5 +23,9 @@ const showWindow = () => {
     .show()
     .catch((e) => console.error("settings show failed:", e));
 };
-setTimeout(showWindow, 50);
-setTimeout(showWindow, 500);
+const warmup = new URLSearchParams(window.location.search).has("warmup");
+if (!warmup) {
+  // Window starts hidden. rAF is throttled while hidden and would never fire.
+  setTimeout(showWindow, 50);
+  setTimeout(showWindow, 500);
+}

@@ -1,12 +1,13 @@
-import { useEffect, useState } from "react";
 import { firePendingReviewForSession } from "@/modules/agents/lib/review";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import { onKeysChanged } from "@/modules/settings/store";
+import { useEffect, useRef, useState } from "react";
 import {
   getAllCustomEndpointKeys,
   getAllKeys,
   hasAnyKey,
 } from "../lib/keyring";
+import { isModelUsable, resolveUsableModelId } from "../lib/usableModels";
 import { useAgentsStore } from "../store/agentsStore";
 import { useChatStore } from "../store/chatStore";
 import { useSnippetsStore } from "../store/snippetsStore";
@@ -82,17 +83,52 @@ export function useAiBootstrap(): {
     };
   }, [setApiKeys, setCustomEndpointKeys, prefsHydrated]);
 
-  // Hydrate the cross-window preference store and mirror the default model
-  // into chatStore so the dropdown reflects what the user picked in Settings.
+  // Hydrate prefs, then select the stored default only if that model is
+  // actually usable with the current keys. Otherwise first usable model.
   const initPrefs = usePreferencesStore((s) => s.init);
   const prefDefaultModel = usePreferencesStore((s) => s.defaultModelId);
+  const openrouterModelId = usePreferencesStore((s) => s.openrouterModelId);
+  const appliedDefault = useRef<string | null>(null);
   useEffect(() => {
     void initPrefs();
   }, [initPrefs]);
   useEffect(() => {
-    if (!prefsHydrated) return;
-    setSelectedModelId(prefDefaultModel);
-  }, [prefsHydrated, prefDefaultModel, setSelectedModelId]);
+    if (!prefsHydrated || !keysLoaded) return;
+    const access = {
+      keys: apiKeys,
+      openrouterModelId,
+      lmstudioModelId,
+      mlxModelId,
+      ollamaModelId,
+      openaiCompatibleBaseURL,
+      openaiCompatibleModelId,
+    };
+    const current = useChatStore.getState().selectedModelId;
+    const defaultChanged = appliedDefault.current !== prefDefaultModel;
+    if (!defaultChanged && isModelUsable(current, access, customEndpoints)) {
+      return;
+    }
+    appliedDefault.current = prefDefaultModel;
+    const next = resolveUsableModelId(
+      prefDefaultModel,
+      access,
+      customEndpoints,
+    );
+    if (current !== next) setSelectedModelId(next);
+  }, [
+    prefsHydrated,
+    keysLoaded,
+    prefDefaultModel,
+    apiKeys,
+    openrouterModelId,
+    lmstudioModelId,
+    mlxModelId,
+    ollamaModelId,
+    openaiCompatibleBaseURL,
+    openaiCompatibleModelId,
+    customEndpoints,
+    setSelectedModelId,
+  ]);
 
   useEffect(() => {
     void hydrateSessions();

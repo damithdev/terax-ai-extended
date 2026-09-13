@@ -7,9 +7,9 @@ use modules::{
 };
 use std::path::PathBuf;
 use std::sync::Mutex;
-use tauri::{Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 #[cfg(target_os = "macos")]
-use tauri::{PhysicalPosition, WindowEvent};
+use tauri::PhysicalPosition;
+use tauri::{Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_window_state::StateFlags;
 
 /// Drained on first read so HMR / re-mounts can't replay the launch dir.
@@ -85,14 +85,30 @@ const fn settings_always_on_top(is_macos: bool) -> bool {
     !is_macos
 }
 
+/// `warmup` keeps the page hidden after load so a later show is instant.
+fn settings_page_url(tab: Option<&str>, warmup: bool) -> String {
+    let tab = tab.filter(|t| !t.is_empty());
+    match (tab, warmup) {
+        (Some(t), false) => format!("settings.html?tab={t}"),
+        (Some(t), true) => format!("settings.html?tab={t}&warmup=1"),
+        (None, true) => "settings.html?warmup=1".to_string(),
+        (None, false) => "settings.html".to_string(),
+    }
+}
+
 #[tauri::command]
-async fn open_settings_window(app: tauri::AppHandle, tab: Option<String>) -> Result<(), String> {
-    let url_path = match tab.as_deref() {
-        Some(t) if !t.is_empty() => format!("settings.html?tab={}", t),
-        _ => "settings.html".to_string(),
-    };
+async fn open_settings_window(
+    app: tauri::AppHandle,
+    tab: Option<String>,
+    show: Option<bool>,
+) -> Result<(), String> {
+    let show = show.unwrap_or(true);
+    let url_path = settings_page_url(if show { tab.as_deref() } else { None }, !show);
 
     if let Some(window) = app.get_webview_window("settings") {
+        if !show {
+            return Ok(());
+        }
         #[cfg(not(target_os = "macos"))]
         let _ = window.set_always_on_top(true);
         let _ = window.show();
@@ -133,6 +149,13 @@ async fn open_settings_window(app: tauri::AppHandle, tab: Option<String>) -> Res
     let builder = builder.decorations(false).transparent(true);
 
     let window = builder.build().map_err(|e| e.to_string())?;
+    let hide_on_close = window.clone();
+    window.on_window_event(move |event| {
+        if let WindowEvent::CloseRequested { api, .. } = event {
+            api.prevent_close();
+            let _ = hide_on_close.hide();
+        }
+    });
 
     // Some Linux compositors (GNOME/Mutter with CSD-by-default) ignore the
     // builder-time decorations flag — re-assert it after realize.
@@ -395,7 +418,10 @@ pub fn run() {
 
 #[cfg(test)]
 mod launch_target_tests {
-    use super::{resolve_launch_target, settings_always_on_top, LaunchEntry, LaunchTarget};
+    use super::{
+        resolve_launch_target, settings_always_on_top, settings_page_url, LaunchEntry,
+        LaunchTarget,
+    };
     use std::path::PathBuf;
 
     #[test]
@@ -446,5 +472,19 @@ mod launch_target_tests {
     fn settings_float_only_outside_macos() {
         assert!(!settings_always_on_top(true));
         assert!(settings_always_on_top(false));
+    }
+
+    #[test]
+    fn settings_page_url_encodes_tab_and_warmup() {
+        assert_eq!(settings_page_url(None, false), "settings.html");
+        assert_eq!(
+            settings_page_url(Some("models"), false),
+            "settings.html?tab=models"
+        );
+        assert_eq!(settings_page_url(None, true), "settings.html?warmup=1");
+        assert_eq!(
+            settings_page_url(Some(""), true),
+            "settings.html?warmup=1"
+        );
     }
 }

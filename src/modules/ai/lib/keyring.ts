@@ -32,10 +32,19 @@ async function resolveXaiOverlay(): Promise<string | null> {
   return resolveXaiOAuthAccessToken();
 }
 
+async function resolveOpenAIOverlay(): Promise<string | null> {
+  const { resolveOpenAIOauthAccessToken } = await import("./openaiOAuth");
+  return resolveOpenAIOauthAccessToken();
+}
+
 export async function getKey(provider: ProviderId): Promise<string | null> {
   if (!providerSupportsKey(provider)) return null;
   if (provider === "xai") {
     const oauth = await resolveXaiOverlay();
+    if (oauth) return oauth;
+  }
+  if (provider === "openai") {
+    const oauth = await resolveOpenAIOverlay();
     if (oauth) return oauth;
   }
   try {
@@ -95,6 +104,12 @@ export async function getAllKeys(): Promise<ProviderKeys> {
   try {
     const oauth = await resolveXaiOverlay();
     if (oauth) out.xai = oauth;
+  } catch {
+    // keep the console API key if refresh fails
+  }
+  try {
+    const oauth = await resolveOpenAIOverlay();
+    if (oauth) out.openai = oauth;
   } catch {
     // keep the console API key if refresh fails
   }

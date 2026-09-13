@@ -25,8 +25,13 @@ import {
 import { buildTools, type ToolContext } from "../tools/tools";
 import { compactModelMessagesDetailed } from "./compact";
 import type { CustomEndpointKeys, ProviderKeys } from "./keyring";
+import {
+  OPENAI_CODEX_BASE_URL,
+  OPENAI_CODEX_ORIGINATOR,
+  resolveOpenAIOauthSession,
+} from "./openaiOAuth";
 import { prepareAgentPrompt } from "./prompt";
-import { createProxyFetch } from "./proxyFetch";
+import { createProxyFetch, proxyFetch } from "./proxyFetch";
 import { resolveXaiOAuthAccessToken } from "./xaiOAuth";
 
 const localProxyFetch = createProxyFetch({ allowPrivateNetwork: true });
@@ -98,6 +103,11 @@ export async function buildLanguageModel(
         "xAI is not signed in. Open Settings → Models and sign in with SuperGrok / X Premium+ or paste an API key.",
       );
     }
+    if (provider === "openai") {
+      throw new Error(
+        "OpenAI is not signed in. Open Settings → Models and sign in with ChatGPT or paste an API key.",
+      );
+    }
     throw new Error(
       `No API key configured for ${provider}. Open Settings → AI to add one.`,
     );
@@ -109,7 +119,7 @@ export async function buildLanguageModel(
   const compatURL = options.openaiCompatibleBaseURL ?? "";
   const epKey = customEndpointKey ?? "";
   const cacheKey = `${provider} ${key} ${epKey} ${resolvedModelId} ${lmstudioURL} ${mlxURL} ${ollamaURL} ${compatURL}`;
-  if (provider !== "xai") {
+  if (provider !== "xai" && provider !== "openai") {
     const hit = modelCache.get(cacheKey);
     if (hit) return hit;
   }
@@ -117,9 +127,31 @@ export async function buildLanguageModel(
   let built: LanguageModel;
   switch (provider) {
     case "openai": {
+      const session = await resolveOpenAIOauthSession();
+      if (!session && !key) {
+        throw new Error(
+          "OpenAI is not signed in. Open Settings → Models and sign in with ChatGPT or paste an API key.",
+        );
+      }
+      const cred = session?.accessToken || key;
+      const openaiCacheKey = `${provider} ${cred} ${epKey} ${resolvedModelId} ${lmstudioURL} ${mlxURL} ${ollamaURL} ${compatURL}`;
       const { createOpenAI } = await import("@ai-sdk/openai");
-      built = createOpenAI({ apiKey: key })(resolvedModelId);
-      break;
+      return cachedModel(openaiCacheKey, () =>
+        session
+          ? createOpenAI({
+              apiKey: session.accessToken,
+              baseURL: OPENAI_CODEX_BASE_URL,
+              headers: {
+                ...(session.accountId
+                  ? { "ChatGPT-Account-ID": session.accountId }
+                  : {}),
+                "OpenAI-Beta": "responses=experimental",
+                originator: OPENAI_CODEX_ORIGINATOR,
+              },
+              fetch: proxyFetch,
+            })(resolvedModelId)
+          : createOpenAI({ apiKey: key })(resolvedModelId),
+      );
     }
     case "anthropic": {
       const { createAnthropic } = await import("@ai-sdk/anthropic");

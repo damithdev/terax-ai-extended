@@ -45,6 +45,12 @@ import {
   setCustomEndpointKey,
   setKey,
 } from "@/modules/ai/lib/keyring";
+import {
+  clearOpenAIOauthSession,
+  completeOpenAIOauthLogin,
+  isOpenAIApiKey,
+  readOpenAIOauthSession,
+} from "@/modules/ai/lib/openaiOAuth";
 import { isProviderUsable } from "@/modules/ai/lib/usableModels";
 import {
   clearXaiOAuthSession,
@@ -354,6 +360,8 @@ export function ModelsSection() {
       if (id === "openai-compatible") void onClearKey(id);
     } else if (id === "xai") {
       void clearXaiOAuthSession().then(() => onClearKey(id));
+    } else if (id === "openai") {
+      void clearOpenAIOauthSession().then(() => onClearKey(id));
     } else {
       void onClearKey(id);
     }
@@ -446,6 +454,24 @@ export function ModelsSection() {
                   signInLabel="Sign in with SuperGrok / X Premium+"
                   identityFallback="SuperGrok"
                   deviceHelpText="Confirm the code on the xAI page. Waiting for authorization…"
+                />
+              ) : p.id === "openai" ? (
+                <OAuthProviderCard
+                  key={p.id}
+                  provider={p}
+                  currentKey={keys[p.id]}
+                  onSave={(v) => onSaveKey(p.id, v)}
+                  onClear={() => onClearKey(p.id)}
+                  onRemove={() => removeProvider(p.id)}
+                  onAuthChange={reloadKeys}
+                  isApiKey={isOpenAIApiKey}
+                  readSession={readOpenAIOauthSession}
+                  completeLogin={completeOpenAIOauthLogin}
+                  clearSession={clearOpenAIOauthSession}
+                  blurb="Sign in with ChatGPT Plus or Pro to use subscription quota. Enable device code authorization for Codex in ChatGPT Settings → Security first. A platform API key is optional."
+                  signInLabel="Sign in with ChatGPT"
+                  identityFallback="ChatGPT account"
+                  deviceHelpText="Enter this code on the ChatGPT device page. Waiting for authorization…"
                 />
               ) : (
                 <ProviderKeyCard

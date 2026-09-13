@@ -10,6 +10,8 @@ import { Spinner } from "@/components/ui/spinner";
 import { fmtShortcut, MOD_KEY } from "@/lib/platform";
 import { cn } from "@/lib/utils";
 import { openSettingsWindow } from "@/modules/settings/openSettingsWindow";
+import { usePreferencesStore } from "@/modules/settings/preferences";
+import { setDefaultModel } from "@/modules/settings/store";
 import {
   Add01Icon,
   AiBookIcon,
@@ -29,37 +31,41 @@ import {
   GlobeIcon,
   GoogleGeminiIcon,
   Grok02Icon,
-  MistralIcon,
   Message01Icon,
   Mic01Icon,
+  MistralIcon,
   PlugIcon,
-  ServerStack01Icon,
   Search01Icon,
-  Settings01Icon,
+  ServerStack01Icon,
   StarIcon,
   StopCircleIcon,
   Tick01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   compatModelIdForEndpoint,
   getCompatModelInfo,
   getModel,
   isCompatModelId,
+  isKnownModelId,
   MODELS,
-  providerNeedsKey,
-  PROVIDERS,
-  STT_PROVIDER_LABELS,
   type ModelCapabilities,
   type ModelId,
   type ModelInfo,
+  PROVIDERS,
   type ProviderId,
+  STT_PROVIDER_LABELS,
 } from "../config";
 import { ACCEPTED_FILES, useComposer } from "../lib/composer";
 import { toggleFavoriteModel } from "../lib/modelPrefs";
+import {
+  isEndpointUsable,
+  isProviderUsable,
+  type ProviderAccess,
+  usableProviders,
+} from "../lib/usableModels";
 import { useChatStore } from "../store/chatStore";
-import { usePreferencesStore } from "@/modules/settings/preferences";
 
 const PROVIDER_ICON = {
   openai: ChatGptIcon,
@@ -141,7 +147,7 @@ export function AiStatusBarControls() {
           disabled={c.isBusy || c.voice.transcribing || !c.voice.hasKey}
           className={cn(
             c.voice.recording &&
-            "bg-destructive/10 text-destructive hover:bg-destructive/15",
+              "bg-destructive/10 text-destructive hover:bg-destructive/15",
           )}
         >
           {c.voice.recording ? (
@@ -206,14 +212,50 @@ export function AiStatusBarControls() {
 }
 
 type Tab = "all" | "favorites" | "recent";
+const COMPAT_PROVIDER_ID = "__compat__";
+
+function useProviderAccess(): ProviderAccess {
+  const apiKeys = useChatStore((s) => s.apiKeys);
+  const openrouterModelId = usePreferencesStore((s) => s.openrouterModelId);
+  const lmstudioModelId = usePreferencesStore((s) => s.lmstudioModelId);
+  const mlxModelId = usePreferencesStore((s) => s.mlxModelId);
+  const ollamaModelId = usePreferencesStore((s) => s.ollamaModelId);
+  const openaiCompatibleBaseURL = usePreferencesStore(
+    (s) => s.openaiCompatibleBaseURL,
+  );
+  const openaiCompatibleModelId = usePreferencesStore(
+    (s) => s.openaiCompatibleModelId,
+  );
+  return useMemo(
+    () => ({
+      keys: apiKeys,
+      openrouterModelId,
+      lmstudioModelId,
+      mlxModelId,
+      ollamaModelId,
+      openaiCompatibleBaseURL,
+      openaiCompatibleModelId,
+    }),
+    [
+      apiKeys,
+      openrouterModelId,
+      lmstudioModelId,
+      mlxModelId,
+      ollamaModelId,
+      openaiCompatibleBaseURL,
+      openaiCompatibleModelId,
+    ],
+  );
+}
 
 function ModelDropdown() {
   const selected = useChatStore((s) => s.selectedModelId);
-  const apiKeys = useChatStore((s) => s.apiKeys);
   const setSelected = useChatStore((s) => s.setSelectedModelId);
   const favoriteIds = usePreferencesStore((s) => s.favoriteModelIds);
   const recentIds = usePreferencesStore((s) => s.recentModelIds);
   const customEndpoints = usePreferencesStore((s) => s.customEndpoints);
+  const defaultModelId = usePreferencesStore((s) => s.defaultModelId);
+  const access = useProviderAccess();
   const current = isCompatModelId(selected)
     ? getCompatModelInfo(selected, customEndpoints)
     : getModel(selected as ModelId);
@@ -221,38 +263,42 @@ function ModelDropdown() {
   const [activeProvider, setActiveProvider] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("all");
   const inputRef = useRef<HTMLInputElement>(null);
-  const currentProviderHasKey = isCompatModelId(selected)
-    ? true
-    : providerNeedsKey(current.provider)
-      ? !!apiKeys[current.provider]
-      : true;
 
-  const hasKeyFor = (id: ProviderId) =>
-    providerNeedsKey(id) ? !!apiKeys[id] : true;
-
-  const epModelInfos = useMemo(() => {
-    return customEndpoints.map((ep) =>
-      getCompatModelInfo(compatModelIdForEndpoint(ep.id), customEndpoints),
-    );
-  }, [customEndpoints]);
-
-  const sortedProviders = useMemo(() => {
-    const configured: (typeof PROVIDERS)[number][] = [];
-    const unconfigured: (typeof PROVIDERS)[number][] = [];
-    for (const p of PROVIDERS) {
-      if (p.id === "openai-compatible") continue;
-      (hasKeyFor(p.id) ? configured : unconfigured).push(p);
-    }
-    return { configured, unconfigured };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apiKeys]);
-
-  const allModels = useMemo(
-    () => [...MODELS, ...epModelInfos],
-    [epModelInfos],
+  const readyProviderIds = useMemo(() => usableProviders(access), [access]);
+  const readyEndpoints = useMemo(
+    () => customEndpoints.filter(isEndpointUsable),
+    [customEndpoints],
   );
 
-  const COMPAT_PROVIDER_ID = "__compat__";
+  const epModelInfos = useMemo(() => {
+    return readyEndpoints.map((ep) =>
+      getCompatModelInfo(compatModelIdForEndpoint(ep.id), customEndpoints),
+    );
+  }, [customEndpoints, readyEndpoints]);
+
+  const sortedProviders = useMemo(
+    () => PROVIDERS.filter((p) => readyProviderIds.includes(p.id)),
+    [readyProviderIds],
+  );
+
+  const allModels = useMemo(
+    () => [
+      ...MODELS.filter((m) => isProviderUsable(m.provider, access)),
+      ...epModelInfos,
+    ],
+    [access, epModelInfos],
+  );
+
+  useEffect(() => {
+    if (activeProvider === null) return;
+    if (activeProvider === COMPAT_PROVIDER_ID) {
+      if (readyEndpoints.length === 0) setActiveProvider(null);
+      return;
+    }
+    if (!readyProviderIds.includes(activeProvider as ProviderId)) {
+      setActiveProvider(null);
+    }
+  }, [activeProvider, readyEndpoints.length, readyProviderIds]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -291,17 +337,8 @@ function ModelDropdown() {
           type="button"
           variant="ghost"
           size="sm"
-          className={cn(
-            "h-5.5 gap-1 rounded-md px-1.5 my-1 text-xs hover:bg-accent hover:text-foreground",
-            currentProviderHasKey
-              ? "text-muted-foreground"
-              : "text-amber-600 dark:text-amber-400",
-          )}
-          title={
-            currentProviderHasKey
-              ? `Model: ${current.label}`
-              : `${current.label} — no key configured`
-          }
+          className="h-5.5 gap-1 rounded-md px-1.5 my-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+          title={`Model: ${current.label}`}
         >
           {current.label}
           <HugeiconsIcon
@@ -363,7 +400,6 @@ function ModelDropdown() {
         </div>
 
         <div className="flex max-h-104 min-h-0">
-          {/* Provider sidebar — configured first, unconfigured muted, no dividers. */}
           <div className="flex w-11 shrink-0 flex-col gap-0.5 overflow-y-auto border-r border-border/70 bg-muted/20 py-1.5">
             <ProviderPill
               icon={AiBookIcon}
@@ -371,23 +407,16 @@ function ModelDropdown() {
               active={activeProvider === null}
               onClick={() => setActiveProvider(null)}
             />
-            {[...sortedProviders.configured, ...sortedProviders.unconfigured].map(
-              (p) => (
-                <ProviderPill
-                  key={p.id}
-                  icon={PROVIDER_ICON[p.id]}
-                  title={
-                    hasKeyFor(p.id)
-                      ? p.label
-                      : `${p.label} — not configured`
-                  }
-                  active={activeProvider === p.id}
-                  muted={!hasKeyFor(p.id)}
-                  onClick={() => setActiveProvider(p.id)}
-                />
-              ),
-            )}
-            {customEndpoints.length > 0 && (
+            {sortedProviders.map((p) => (
+              <ProviderPill
+                key={p.id}
+                icon={PROVIDER_ICON[p.id]}
+                title={p.label}
+                active={activeProvider === p.id}
+                onClick={() => setActiveProvider(p.id)}
+              />
+            ))}
+            {readyEndpoints.length > 0 && (
               <ProviderPill
                 icon={PlugIcon}
                 title="OpenAI Compatible"
@@ -409,18 +438,26 @@ function ModelDropdown() {
             activeProvider !== COMPAT_PROVIDER_ID ? (
               <ProviderHeader providerId={activeProvider as ProviderId} />
             ) : null}
-            {activeProvider !== null &&
-            activeProvider !== COMPAT_PROVIDER_ID &&
-            !hasKeyFor(activeProvider as ProviderId) ? (
-              <ProviderConfigureCTA providerId={activeProvider as ProviderId} />
-            ) : null}
             {filtered.length === 0 ? (
-              <div className="flex items-center justify-center px-4 py-10 text-xs text-muted-foreground/70">
-                {tab === "favorites"
-                  ? "No favorites yet — star a model to pin it here."
-                  : tab === "recent"
-                    ? "No recently-used models."
-                    : "No models match."}
+              <div className="flex flex-col items-center justify-center gap-2 px-4 py-10 text-xs text-muted-foreground/70">
+                <span>
+                  {tab === "favorites"
+                    ? "No favorites yet — star a model to pin it here."
+                    : tab === "recent"
+                      ? "No recently-used models."
+                      : allModels.length === 0
+                        ? "No models configured."
+                        : "No models match."}
+                </span>
+                {tab === "all" && allModels.length === 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => void openSettingsWindow("models")}
+                    className="text-[11px] underline-offset-2 hover:text-foreground hover:underline"
+                  >
+                    Open Settings
+                  </button>
+                ) : null}
               </div>
             ) : (
               filtered.map((m) => (
@@ -428,18 +465,12 @@ function ModelDropdown() {
                   key={m.id}
                   model={m}
                   selected={m.id === selected}
-                  hasKey={
-                    isCompatModelId(m.id) ||
-                    hasKeyFor(m.provider)
-                  }
+                  isDefault={m.id === defaultModelId}
                   favorite={favoriteIds.includes(m.id)}
                   showProviderIcon={activeProvider === null}
                   onPick={() => {
-                    if (!isCompatModelId(m.id) && !hasKeyFor(m.provider)) {
-                      void openSettingsWindow("models");
-                      return;
-                    }
                     setSelected(m.id);
+                    if (isKnownModelId(m.id)) void setDefaultModel(m.id);
                   }}
                   onToggleFavorite={() => void toggleFavoriteModel(m.id)}
                 />
@@ -524,40 +555,16 @@ function ProviderHeader({ providerId }: { providerId: ProviderId }) {
   if (!p) return null;
   return (
     <div className="flex items-center gap-1.5 px-3 pt-1 pb-1.5 text-[11px] font-medium tracking-tight text-muted-foreground/90">
-      <HugeiconsIcon
-        icon={PROVIDER_ICON[p.id]}
-        size={13}
-        strokeWidth={1.75}
-      />
+      <HugeiconsIcon icon={PROVIDER_ICON[p.id]} size={13} strokeWidth={1.75} />
       <span>{p.label}</span>
     </div>
-  );
-}
-
-function ProviderConfigureCTA({ providerId }: { providerId: ProviderId }) {
-  const p = PROVIDERS.find((x) => x.id === providerId);
-  if (!p) return null;
-  return (
-    <button
-      type="button"
-      onClick={() => void openSettingsWindow("models")}
-      className="group mx-2 mb-1 flex w-[calc(100%-1rem)] items-center gap-2 rounded-md border border-dashed border-border/70 bg-muted/20 px-3 py-2 text-left text-[11px] text-muted-foreground transition-colors hover:border-border hover:bg-accent/40 hover:text-foreground"
-    >
-      <HugeiconsIcon icon={Settings01Icon} size={13} strokeWidth={1.75} />
-      <span className="flex-1 truncate">
-        Configure {p.label} to use these models.
-      </span>
-      <span className="shrink-0 text-[10px] underline-offset-2 group-hover:underline">
-        Open
-      </span>
-    </button>
   );
 }
 
 function ModelRow({
   model,
   selected,
-  hasKey,
+  isDefault,
   favorite,
   showProviderIcon,
   onPick,
@@ -565,7 +572,7 @@ function ModelRow({
 }: {
   model: ModelInfo;
   selected: boolean;
-  hasKey: boolean;
+  isDefault: boolean;
   favorite: boolean;
   showProviderIcon: boolean;
   onPick: () => void;
@@ -580,7 +587,6 @@ function ModelRow({
       className={cn(
         "group mx-1 my-0.5 flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5",
         selected ? "bg-accent/60 text-foreground" : "text-foreground/85",
-        !hasKey && "opacity-60",
       )}
     >
       <button
@@ -626,6 +632,12 @@ function ModelRow({
 
       <CapabilityBars caps={model.capabilities} />
 
+      {isDefault ? (
+        <span className="shrink-0 text-[9.5px] tracking-wide text-muted-foreground">
+          Default
+        </span>
+      ) : null}
+
       {selected ? (
         <HugeiconsIcon
           icon={Tick01Icon}
@@ -643,11 +655,7 @@ function CapabilityBars({ caps }: { caps: ModelCapabilities }) {
     <div className="ml-auto flex items-center gap-1.5">
       <CapBar icon={BrainIcon} value={caps.intelligence} label="Intelligence" />
       <CapBar icon={FlashIcon} value={caps.speed} label="Speed" />
-      <CapBar
-        icon={CoinsDollarIcon}
-        value={caps.cost}
-        label="Affordability"
-      />
+      <CapBar icon={CoinsDollarIcon} value={caps.cost} label="Affordability" />
     </div>
   );
 }
@@ -662,10 +670,7 @@ function CapBar({
   label: string;
 }) {
   return (
-    <span
-      className="flex items-center gap-0.5"
-      title={`${label}: ${value}/5`}
-    >
+    <span className="flex items-center gap-0.5" title={`${label}: ${value}/5`}>
       <HugeiconsIcon
         icon={icon}
         size={10}

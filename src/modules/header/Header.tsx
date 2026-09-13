@@ -3,6 +3,7 @@ import { WindowControls } from "@/components/WindowControls";
 import { IS_MAC, USE_CUSTOM_WINDOW_CONTROLS } from "@/lib/platform";
 import { NotificationBell } from "@/modules/agents";
 import type { AgentLaunchRequest } from "@/modules/agents/lib/launcher";
+import { warmupSettingsWindow } from "@/modules/settings/openSettingsWindow";
 import type { Tab } from "@/modules/tabs";
 import { TabBar } from "@/modules/tabs";
 import {
@@ -106,6 +107,7 @@ export function Header({
       size="icon"
       className="size-7 shrink-0 rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
       onClick={onOpenSettings}
+      onPointerEnter={() => warmupSettingsWindow()}
       title="Settings"
     >
       <HugeiconsIcon icon={Settings01Icon} size={15} strokeWidth={1.75} />

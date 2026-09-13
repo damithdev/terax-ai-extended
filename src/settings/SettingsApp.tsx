@@ -14,20 +14,42 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { type JSX, useEffect, useState } from "react";
-import { AboutSection } from "./sections/AboutSection";
-import { AgentsSection } from "./sections/AgentsSection";
-import { EditorSection } from "./sections/EditorSection";
-import { GeneralSection } from "./sections/GeneralSection";
-import { ModelsSection } from "./sections/ModelsSection";
-import { ShortcutsSection } from "./sections/ShortcutsSection";
-import { ThemesSection } from "./sections/ThemesSection";
+import {
+  type JSX,
+  type LazyExoticComponent,
+  lazy,
+  Suspense,
+  useEffect,
+  useState,
+} from "react";
+
+const GeneralSection = lazy(async () => ({
+  default: (await import("./sections/GeneralSection")).GeneralSection,
+}));
+const EditorSection = lazy(async () => ({
+  default: (await import("./sections/EditorSection")).EditorSection,
+}));
+const ThemesSection = lazy(async () => ({
+  default: (await import("./sections/ThemesSection")).ThemesSection,
+}));
+const ShortcutsSection = lazy(async () => ({
+  default: (await import("./sections/ShortcutsSection")).ShortcutsSection,
+}));
+const ModelsSection = lazy(async () => ({
+  default: (await import("./sections/ModelsSection")).ModelsSection,
+}));
+const AgentsSection = lazy(async () => ({
+  default: (await import("./sections/AgentsSection")).AgentsSection,
+}));
+const AboutSection = lazy(async () => ({
+  default: (await import("./sections/AboutSection")).AboutSection,
+}));
 
 const TABS: {
   id: SettingsTab;
   label: string;
   icon: typeof Settings01Icon;
-  component: () => JSX.Element;
+  component: LazyExoticComponent<() => JSX.Element>;
 }[] = [
   {
     id: "general",
@@ -149,7 +171,9 @@ export function SettingsApp() {
 
       <main className="min-h-0 flex-1 overflow-y-auto px-8 pt-6 pb-7 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <div className="mx-auto w-full max-w-160">
-          {ActiveSection && <ActiveSection />}
+          <Suspense fallback={null}>
+            {ActiveSection ? <ActiveSection /> : null}
+          </Suspense>
         </div>
       </main>
     </div>

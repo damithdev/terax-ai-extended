@@ -38,7 +38,10 @@ export function WindowControls({ closeOnly = false }: Props) {
   const w = getCurrentWindow();
 
   return (
-    <div className="flex h-full shrink-0 items-center gap-0.5 pr-1">
+    <div
+      data-no-drag
+      className="flex h-full shrink-0 items-center gap-0.5 pr-1"
+    >
       {!closeOnly && (
         <>
           <CtlButton ariaLabel="Minimize" onClick={() => void w.minimize()}>

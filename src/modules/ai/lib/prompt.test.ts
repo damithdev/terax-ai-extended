@@ -1,4 +1,4 @@
-import { streamText, type ModelMessage } from "ai";
+import { type ModelMessage, streamText } from "ai";
 import { MockLanguageModelV3 } from "ai/test";
 import { describe, expect, it, vi } from "vitest";
 import { prepareAgentPrompt } from "./prompt";

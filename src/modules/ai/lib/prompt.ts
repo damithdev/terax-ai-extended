@@ -1,5 +1,5 @@
-import type { ModelMessage, SystemModelMessage } from "ai";
 import type { ProviderId } from "@/modules/ai/config";
+import type { ModelMessage, SystemModelMessage } from "ai";
 
 export type PreparedAgentPrompt = {
   system: SystemModelMessage[];

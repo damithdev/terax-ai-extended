@@ -1,12 +1,13 @@
 import {
   convertToModelMessages,
+  type LanguageModel,
   pruneMessages,
   stepCountIs,
   streamText,
-  type LanguageModel,
   type UIMessage,
 } from "ai";
 import {
+  type CustomEndpoint,
   DEFAULT_MODEL_ID,
   endpointIdFromCompatModel,
   getModelContextLimit,
@@ -16,17 +17,22 @@ import {
   MLX_DEFAULT_BASE_URL,
   modelKeepsReasoning,
   OLLAMA_DEFAULT_BASE_URL,
+  type ProviderId,
   providerNeedsKey,
   resolveModel,
   selectSystemPrompt,
-  type CustomEndpoint,
-  type ProviderId,
 } from "../config";
 import { buildTools, type ToolContext } from "../tools/tools";
 import { compactModelMessagesDetailed } from "./compact";
-import type { ProviderKeys, CustomEndpointKeys } from "./keyring";
+import type { CustomEndpointKeys, ProviderKeys } from "./keyring";
+import {
+  OPENAI_CODEX_BASE_URL,
+  OPENAI_CODEX_ORIGINATOR,
+  resolveOpenAIOauthSession,
+} from "./openaiOAuth";
 import { prepareAgentPrompt } from "./prompt";
-import { createProxyFetch } from "./proxyFetch";
+import { createProxyFetch, proxyFetch } from "./proxyFetch";
+import { resolveXaiOAuthAccessToken } from "./xaiOAuth";
 
 const localProxyFetch = createProxyFetch({ allowPrivateNetwork: true });
 
@@ -73,6 +79,17 @@ export type BuildModelOptions = {
 
 const modelCache = new Map<string, LanguageModel>();
 
+function cachedModel(
+  cacheKey: string,
+  build: () => LanguageModel,
+): LanguageModel {
+  const hit = modelCache.get(cacheKey);
+  if (hit) return hit;
+  const built = build();
+  modelCache.set(cacheKey, built);
+  return built;
+}
+
 export async function buildLanguageModel(
   provider: ProviderId,
   keys: ProviderKeys,
@@ -81,6 +98,16 @@ export async function buildLanguageModel(
   customEndpointKey?: string | null,
 ): Promise<LanguageModel> {
   if (providerNeedsKey(provider) && !keys[provider]) {
+    if (provider === "xai") {
+      throw new Error(
+        "xAI is not signed in. Open Settings → Models and sign in with SuperGrok / X Premium+ or paste an API key.",
+      );
+    }
+    if (provider === "openai") {
+      throw new Error(
+        "OpenAI is not signed in. Open Settings → Models and sign in with ChatGPT or paste an API key.",
+      );
+    }
     throw new Error(
       `No API key configured for ${provider}. Open Settings → AI to add one.`,
     );
@@ -92,15 +119,39 @@ export async function buildLanguageModel(
   const compatURL = options.openaiCompatibleBaseURL ?? "";
   const epKey = customEndpointKey ?? "";
   const cacheKey = `${provider} ${key} ${epKey} ${resolvedModelId} ${lmstudioURL} ${mlxURL} ${ollamaURL} ${compatURL}`;
-  const hit = modelCache.get(cacheKey);
-  if (hit) return hit;
+  if (provider !== "xai" && provider !== "openai") {
+    const hit = modelCache.get(cacheKey);
+    if (hit) return hit;
+  }
 
   let built: LanguageModel;
   switch (provider) {
     case "openai": {
+      const session = await resolveOpenAIOauthSession();
+      if (!session && !key) {
+        throw new Error(
+          "OpenAI is not signed in. Open Settings → Models and sign in with ChatGPT or paste an API key.",
+        );
+      }
+      const cred = session?.accessToken || key;
+      const openaiCacheKey = `${provider} ${cred} ${epKey} ${resolvedModelId} ${lmstudioURL} ${mlxURL} ${ollamaURL} ${compatURL}`;
       const { createOpenAI } = await import("@ai-sdk/openai");
-      built = createOpenAI({ apiKey: key })(resolvedModelId);
-      break;
+      return cachedModel(openaiCacheKey, () =>
+        session
+          ? createOpenAI({
+              apiKey: session.accessToken,
+              baseURL: OPENAI_CODEX_BASE_URL,
+              headers: {
+                ...(session.accountId
+                  ? { "ChatGPT-Account-ID": session.accountId }
+                  : {}),
+                "OpenAI-Beta": "responses=experimental",
+                originator: OPENAI_CODEX_ORIGINATOR,
+              },
+              fetch: proxyFetch,
+            })(resolvedModelId)
+          : createOpenAI({ apiKey: key })(resolvedModelId),
+      );
     }
     case "anthropic": {
       const { createAnthropic } = await import("@ai-sdk/anthropic");
@@ -113,9 +164,18 @@ export async function buildLanguageModel(
       break;
     }
     case "xai": {
+      const oauth = await resolveXaiOAuthAccessToken();
+      const apiKey = oauth || key;
+      if (!apiKey) {
+        throw new Error(
+          "xAI is not signed in. Open Settings → Models and sign in with SuperGrok / X Premium+ or paste an API key.",
+        );
+      }
+      const xaiCacheKey = `${provider} ${apiKey} ${epKey} ${resolvedModelId} ${lmstudioURL} ${mlxURL} ${ollamaURL} ${compatURL}`;
       const { createXai } = await import("@ai-sdk/xai");
-      built = createXai({ apiKey: key })(resolvedModelId);
-      break;
+      return cachedModel(xaiCacheKey, () =>
+        createXai({ apiKey })(resolvedModelId),
+      );
     }
     case "cerebras": {
       const { createCerebras } = await import("@ai-sdk/cerebras");
@@ -123,8 +183,9 @@ export async function buildLanguageModel(
       break;
     }
     case "deepseek": {
-      const { createOpenAICompatible } =
-        await import("@ai-sdk/openai-compatible");
+      const { createOpenAICompatible } = await import(
+        "@ai-sdk/openai-compatible"
+      );
       built = createOpenAICompatible({
         name: "deepseek",
         baseURL: "https://api.deepseek.com",
@@ -133,8 +194,9 @@ export async function buildLanguageModel(
       break;
     }
     case "mistral": {
-      const { createOpenAICompatible } =
-        await import("@ai-sdk/openai-compatible");
+      const { createOpenAICompatible } = await import(
+        "@ai-sdk/openai-compatible"
+      );
       built = createOpenAICompatible({
         name: "mistral",
         baseURL: "https://api.mistral.ai/v1",
@@ -148,8 +210,9 @@ export async function buildLanguageModel(
       break;
     }
     case "openrouter": {
-      const { createOpenAICompatible } =
-        await import("@ai-sdk/openai-compatible");
+      const { createOpenAICompatible } = await import(
+        "@ai-sdk/openai-compatible"
+      );
       built = createOpenAICompatible({
         name: "openrouter",
         baseURL: "https://openrouter.ai/api/v1",
@@ -167,8 +230,9 @@ export async function buildLanguageModel(
           "OpenAI-compatible provider has no base URL. Set it in Settings → Models.",
         );
       }
-      const { createOpenAICompatible } =
-        await import("@ai-sdk/openai-compatible");
+      const { createOpenAICompatible } = await import(
+        "@ai-sdk/openai-compatible"
+      );
       built = createOpenAICompatible({
         name: "openai-compatible",
         baseURL: compatURL,
@@ -178,8 +242,9 @@ export async function buildLanguageModel(
       break;
     }
     case "lmstudio": {
-      const { createOpenAICompatible } =
-        await import("@ai-sdk/openai-compatible");
+      const { createOpenAICompatible } = await import(
+        "@ai-sdk/openai-compatible"
+      );
       built = createOpenAICompatible({
         name: "lmstudio",
         baseURL: lmstudioURL,
@@ -188,8 +253,9 @@ export async function buildLanguageModel(
       break;
     }
     case "mlx": {
-      const { createOpenAICompatible } =
-        await import("@ai-sdk/openai-compatible");
+      const { createOpenAICompatible } = await import(
+        "@ai-sdk/openai-compatible"
+      );
       built = createOpenAICompatible({
         name: "mlx",
         baseURL: mlxURL,
@@ -198,8 +264,9 @@ export async function buildLanguageModel(
       break;
     }
     case "ollama": {
-      const { createOpenAICompatible } =
-        await import("@ai-sdk/openai-compatible");
+      const { createOpenAICompatible } = await import(
+        "@ai-sdk/openai-compatible"
+      );
       built = createOpenAICompatible({
         name: "ollama",
         baseURL: ollamaURL,
@@ -240,9 +307,7 @@ export function buildConfiguredLanguageModel(
     const ep = local.customEndpoints?.find((e) => e.id === eid);
     if (!ep) throw new Error(`Custom endpoint not found: ${eid}`);
     if (!ep.modelId.trim()) {
-      throw new Error(
-        `${ep.name}: no model id set. Open Settings → Models.`,
-      );
+      throw new Error(`${ep.name}: no model id set. Open Settings → Models.`);
     }
     return buildLanguageModel(
       "openai-compatible",

@@ -105,7 +105,7 @@ Terax is a lightweight open-source terminal-first AI-native development environm
 
 ### AI
 
-- **BYOK providers:** OpenAI, Anthropic, Google (Gemini), Groq, xAI (Grok), Cerebras, OpenRouter, DeepSeek, Mistral, plus any OpenAI-compatible endpoint
+- **BYOK providers:** OpenAI (ChatGPT Plus / Pro sign-in or a platform API key), Anthropic, Google (Gemini), Groq, xAI (Grok via SuperGrok / X Premium+ sign-in or a console API key), Cerebras, OpenRouter, DeepSeek, Mistral, plus any OpenAI-compatible endpoint
 - **Local / offline:** LM Studio, MLX, Ollama
 - **Agentic workflow:** plans, sub-agents, project memory via `TERAX.md`, file read / write / edit / multi-edit / grep / glob, bash with approval gating, background processes
 - **Coding-agent orchestration:** spawn Claude Code in a terminal, inspect its output, and send follow-up work through approval-gated tools
@@ -130,9 +130,9 @@ Latest installers are on the [Releases](https://github.com/crynta/terax-ai/relea
 
 ## Configure AI
 
-1. Open **Settings -> AI**.
-2. Pick a provider and paste your API key. For local inference, point Terax at your LM Studio / MLX / Ollama endpoint.
-3. Keys are written to the OS keychain via `keyring`. They never touch disk or localStorage.
+1. Open **Settings -> Models**.
+2. Pick a provider and paste your API key. For OpenAI you can sign in with ChatGPT Plus or Pro (subscription quota; enable device code authorization for Codex in ChatGPT Settings → Security) or paste a platform API key. For xAI you can sign in with SuperGrok or X Premium+ or paste a console API key. For local inference, point Terax at your LM Studio / MLX / Ollama endpoint.
+3. Keys are written to the OS keychain via `keyring`. They never touch disk or localStorage. ChatGPT and xAI OAuth tokens are stored in the same keychain under separate `openai-oauth` and `xai-oauth` accounts.
 
 ## Build from source
 
